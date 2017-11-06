@@ -8,7 +8,6 @@ import ovirtsdk4.types as types
 
 import ConfigParser 
 
-
 #------------------------------------------------------------------------------
 if __name__ == '__main__':
     config = ConfigParser.ConfigParser()
@@ -21,13 +20,16 @@ if __name__ == '__main__':
     connection = sdk.Connection(url=url,
                                 username=username,
                                 password=password,
-                                insercure=True
+                                insecure=True,
                                 debug=True)
 
     system_service = connection.system_service()
     events_service = system_service.events_service()
     vms_service = system_service.vms_service()
 
-    vm_list = vms_service.list(all_content=True)
-    print(vm_list)
+    vms = vms_service.list(search='name=login*',
+			       all_content=True,)
+
+    for vm in vms:
+        print(vm.name, vm.id)
 
