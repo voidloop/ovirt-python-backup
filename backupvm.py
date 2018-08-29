@@ -17,6 +17,7 @@
 # limitations under the License.
 #
 
+from __future__ import print_function
 import logging
 import os
 import sys
