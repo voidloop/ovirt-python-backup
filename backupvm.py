@@ -1,384 +1,266 @@
 #!/usr/local/bin/python3
-# -*- coding: utf-8 -*-
+import glob
+from datetime import datetime
 
-#
-# Copyright (c) 2017 Red Hat, Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-
-from __future__ import print_function
+import subprocess
+from ovirtsdk4 import types
 import logging
 import os
+import ovirtsdk4 as sdk
 import sys
 import time
-import uuid
-import glob
-import subprocess
-
-import ovirtsdk4 as sdk
-import ovirtsdk4.types as types
 
 try:
     import ConfigParser as configparser
 except ImportError:
     import configparser
 
-config = configparser.ConfigParser()
-config.read('/root/.ovirtshellrc')
-
 logging.basicConfig(
-    format='%(asctime)s %(levelname)s:%(message)s', 
-    datefmt='%Y/%m/%d %H:%M:%S', 
-    level=logging.INFO, 
-    filename='/var/log/ovirt-backup.log'
+    format='%(asctime)s %(levelname)s: %(message)s',
+    datefmt='%Y/%m/%d %H:%M:%S',
+    level=logging.INFO,
+    filename='/var/log/ovirt_backup.log'
 )
 
-# Number of backup (default = 3)
-NUM_BACKUP = 3
-if len(sys.argv) >= 3:
-    NUM_BACKUP = int(sys.argv[2])
 
-# The connection details:
-API_URL = config.get('ovirt-shell', 'url')
-API_USER = config.get('ovirt-shell', 'username')
-API_PASSWORD = config.get('ovirt-shell', 'password')
-
-# The file containing the certificat of the CA used by the server. In
-# an usual installation it will be in the file '/etc/pki/ovirt-engine/ca.pem'.
-# API_CA_FILE = '/usr/local/backup/ca.pem'
-
-# The name of the application, to be used as the 'origin' of events
-# sent to the audit log:
-APPLICATION_NAME = 'ov-backup'
-
-# The name and the ID of the virtual machine that contains the data 
-# that we want to back-up:
-DATA_VM_NAME = sys.argv[1]
-# DATA_VM_ID = sys.argv[2]
-
-# The IDs of the disks that we want to back-up:
-# DATA_VM_DISKS = sys.argv[3:]
-
-BACKUP_DIR = '/mnt/ovirt-backup/%s' % DATA_VM_NAME
-BACKUP_DATE = time.strftime("%Y%m%d%H%M")
-
-# The name of the virtual machine where we will attach the disks in
-# order to actually back-up them. This virtual machine will usually have
-# some kind of back-up software installed.
-AGENT_VM_NAME = 'ov-backup'
-
-# Connect to the server:
-connection = sdk.Connection(
-    url=API_URL,
-    username=API_USER,
-    password=API_PASSWORD,
-    # ca_file=API_CA_FILE,
-    insecure=True,
-    debug=True,
-    log=logging.getLogger(),
-)
-logging.info('Connected to the server.')
-
-# Get the reference to the root of the services tree:
-system_service = connection.system_service()
-
-# Get the reference to the service that we will use to send events to
-# the audit log:
-events_service = system_service.events_service()
-
-# In order to send events we need to also send unique integer ids. These
-# should usually come from an external database, but in this example we
-# will just generate them from the current time in seconds since Jan 1st
-# 1970.
-event_id = int(time.time())
-
-# Get the reference to the service that manages the virtual machines:
-vms_service = system_service.vms_service()
-
-# Find the virtual machine that we want to back up. Note that we need to
-# use the 'all_content' parameter to retrieve the retrieve the OVF, as
-# it isn't retrieved by default:
-data_vm_list = vms_service.list(
-    search='name=%s' % DATA_VM_NAME,
-    all_content=True,
-)
-
-if len(data_vm_list) == 0:
-    msg = 'Could not find data virtual machine \'%s\'.' % DATA_VM_NAME
-    logging.error(msg)
-    print(msg, file=sys.stderr)
-    sys.exit(1)
-
-data_vm = data_vm_list[0]
-
-logging.info(
-    'Found data virtual machine \'%s\', the id is \'%s\'.',
-    data_vm.name, data_vm.id,
-)
-
-# If virtual machine is not up, skip backup. 
-if data_vm.status != types.VmStatus.UP:
-    logging.info(
-        'Backup skipped: data virtual machine \'%s\' is not \'up\'.',
-        data_vm.name,
-    )
-    connection.close()
-    sys.exit(0)
-
-# Find the virtual machine were we will attach the disks in order to do
-# the backup:
-agent_vm = vms_service.list(
-    search='name=%s' % AGENT_VM_NAME,
-)[0]
-logging.info(
-    'Found agent virtual machine \'%s\', the id is \'%s\'.',
-    agent_vm.name, agent_vm.id,
-)
-
-# Find the services that manage the data and agent virtual machines:
-data_vm_service = vms_service.vm_service(data_vm.id)
-agent_vm_service = vms_service.vm_service(agent_vm.id)
-
-# Create an unique description for the snapshot, so that it is easier
-# for the administrator to identify this snapshot as a temporary one
-# created just for backup purposes:
-snap_description = '%s-backup-%s' % (data_vm.name, uuid.uuid4())
-
-# Send an external event to indicate to the administrator that the
-# backup of the virtual machine is starting. Note that the description
-# of the event contains the name of the virtual machine and the name of
-# the temporary snapshot, this way, if something fails, the administrator
-# will know what snapshot was used and remove it manually.
-events_service.add(
-    event=types.Event(
-        vm=types.Vm(
-          id=data_vm.id,
-        ),
-        origin=APPLICATION_NAME,
-        severity=types.LogSeverity.NORMAL,
-        custom_id=event_id,
-        description=(
-            'Backup of virtual machine \'%s\' using snapshot \'%s\' is '
-            'starting.' % (data_vm.name, snap_description)
-        ),
-    ),
-)
-event_id += 1
+class BackupError(Exception):
+    pass
 
 
-# Create directory where stored backup
-backup_dir_date = '%s/%s' % (BACKUP_DIR, BACKUP_DATE)
-os.makedirs(backup_dir_date)
+def delayed(seconds):
+    def decorator(f):
+        def wrapper(*args, **kwargs):
+            time.sleep(seconds)
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
 
-# Save the OVF to a file, so that we can use to restore the virtual
-# machine later. The name of the file is the name of the virtual
-# machine, followed by a dash and the identifier of the virtual machine,
-# to make it unique:
-ovf_data = data_vm.initialization.configuration.data
-ovf_file = '%s/%s-%s.ovf' % (backup_dir_date, data_vm.name, data_vm.id)
-with open(ovf_file, 'w') as ovs_fd:
-    ovs_fd.write(ovf_data)
 
-logging.info('Wrote OVF to file \'%s\'.', os.path.abspath(ovf_file))
+class AutoSnapshotService:
+    def __init__(self, snapshots_service, snapshot):
+        self._snapshots_service = snapshots_service
+        self._snapshot = snapshot
 
-# Send the request to create the snapshot. Note that this will return
-# before the snapshot is completely created, so we will later need to
-# wait till the snapshot is completely created.
-snaps_service = data_vm_service.snapshots_service()
-snap = snaps_service.add(
-    snapshot=types.Snapshot(
-        description=snap_description,
-        persist_memorystate=False,
-    ),
-)
-logging.info(
-    'Sent request to create snapshot \'%s\', the id is \'%s\'.',
-    snap.description, snap.id,
-)
+    def __enter__(self):
+        self._snapshot_service = self._snapshots_service.snapshot_service(self._snapshot.id)
+        # Poll and wait till the status of the snapshot is 'ok', which means
+        # that it is completely created:
+        logging.info("Waiting till the snapshot is created, current status is '%s'", self._snapshot.snapshot_status)
+        while self._snapshot_service.get().snapshot_status != types.SnapshotStatus.OK:
+            time.sleep(1)
+        self._creation_time = datetime.now()
+        return self._snapshot_service
 
-# Poll and wait till the status of the snapshot is 'ok', which means
-# that it is completely created:
-snap_service = snaps_service.snapshot_service(snap.id)
-logging.info(
-    'Waiting till the snapshot is created, the status is now \'%s\'.',
-    snap.snapshot_status,
-)
-while snap.snapshot_status != types.SnapshotStatus.OK:
-    time.sleep(1)
-    snap = snap_service.get()
-logging.info('The snapshot is now complete.')
+    @delayed(seconds=30)
+    def __exit__(self, *args, **kwargs):
+        self._snapshot_service.remove(wait=True)
+        logging.info("Sent request to remove snapshot '%s'", self._snapshot.description)
 
-time.sleep(5)
 
-agent_host = agent_vm_service.get().host
-data_host = data_vm_service.get().host
+class AutoAttachmentService:
+    def __init__(self, attachments_service, attachment):
+        self._attachments_service = attachments_service
+        self._attachment = attachment
 
-if agent_host.id != data_host.id:
-    name = agent_vm_service.get().name
+    @delayed(seconds=60)
+    def __enter__(self):
+        self._attachment_service = self._attachments_service.attachment_service(self._attachment.id)
 
-    data_cluster = data_vm_service.get().cluster
+    @delayed(seconds=30)
+    def __exit__(self, *args, **kwargs):
+        logging.info('Detaching disk %s', self._attachment.disk.id)
+        self._attachment_service.remove(wait=True)
 
-    logging.info("Migrating VM '%s' to '%s'." % (name, data_host.id))
 
-    agent_vm_service.migrate(cluster=data_cluster, host=data_host, wait=True)
-    
-    while agent_vm_service.get().status == types.VmStatus.MIGRATING:
-        time.sleep(10)
+class Backup:
+    _base_backup_dir = '/mnt/ovirt-backup'
+    _application_name = 'ovirt_backup'
+    _agent_vm_name = 'ov-backup'
+    _num_backups = 3
 
-    logging.info("The VM '%s' is migrated." % name)
+    def __init__(self, data_vm_name):
+        self._system_service = self._get_system_service()
+        self._events_service = self._system_service.events_service()
 
-time.sleep(5)
+        self._data_vm_name = data_vm_name
+        self._data_vm_service = self._get_vm_service(data_vm_name)
+        self._agent_vm_service = self._get_vm_service(self._agent_vm_name)
 
-# Retrieve the descriptions of the disks of the snapshot:
-snap_disks_service = snap_service.disks_service()
-snap_disks = snap_disks_service.list()
+    def run(self):
+        backup_time = datetime.now()
 
-# Attach all the disks of the snapshot to the agent virtual machine, and
-# save the resulting disk attachments in a list so that we can later
-# detach them easily:
-attachments_service = agent_vm_service.disk_attachments_service()
-attachments = []
+        backup_vm_dir = os.path.join(self._base_backup_dir, self._data_vm_name)
+        backup_vm_date_dir = os.path.join(backup_vm_dir, backup_time.strftime('%Y%m%d%H%M'))
 
-for snap_disk in snap_disks:
+        os.makedirs(backup_vm_date_dir)
 
-    a = types.DiskAttachment(
-        disk=types.Disk(
-            id=snap_disk.id, 
+        try:
+            self._save_ovf(self._data_vm_service.get(all_content=True), backup_vm_date_dir)
+        except AttributeError:
+            pass
+
+        snapshots_service = self._data_vm_service.snapshots_service()
+        snapshot = snapshots_service.add(
             snapshot=types.Snapshot(
-                id=snap.id,
-            ),
-        ),
-        active=True,
-        bootable=False,
-        interface=types.DiskInterface.VIRTIO,
-    )
+                description=str(backup_time),
+                persist_memorystate=False
+            )
+        )
 
-    attachment = attachments_service.add(
-        attachment=a, 
-    )
+        logging.info("Sent request to create snapshot '%s' (%s)", snapshot.description, snapshot.id)
 
-    attachments.append(attachment)
+        try:
+            with AutoSnapshotService(snapshots_service, snapshot) as snapshot_service:
+                self._migrate_agent_vm()
+                self._backup_snapshot_disks(snapshot_service, backup_vm_date_dir)
+            self._remove_old_backups(backup_vm_dir)
+            logging.info("Backup VM '%s' finished", self._data_vm_name)
+        except BackupError as err:
+            logging.exception(err)
+            logging.info("Backup VM '%s' failed! Current backup directory will be removed", self._data_vm_name)
+            self._remove_dir(backup_vm_date_dir)
+            raise
 
-    logging.info(
-        'Attached disk \'%s\' to the agent virtual machine.',
-        attachment.disk.id,
-    )
+    def _remove_old_backups(self, backup_vm_dir):
+        dir_list = sorted(glob.glob(backup_vm_dir + "/*"), key=str.lower)
+        logging.info('Rotating backup directories (oldest directories will be removed)')
+        while len(dir_list) > self._num_backups:
+            # oldest backup is the top of the list
+            self._remove_dir(dir_list.pop(0))
 
-# Now the disks are attached to the virtual agent virtual machine, we
-# can then ask that virtual machine to perform the backup. Doing that
-# requires a mechanism to talk to the backup software that runs inside the
-# agent virtual machine. That is outside of the scope of the SDK. But if
-# the guest agent is installed in the virtual machine then we can
-# provide useful information, like the identifiers of the disks that have
-# just been attached.
+    @staticmethod
+    def _remove_dir(directory):
+        cmd = 'rm -rf {}'.format(directory)
+        logging.info("Removing directory: '%s'", directory)
+        os.system(cmd)
 
-# for attachment in attachments:
-#     if attachment.logical_name is not None:
-#         logging.info(
-#             'Logical name for disk \'%s\' is \'%s\'.',
-#             attachment.disk.id, attachment.logicalname,
-#         )
-#     else:
-#         logging.info(
-#             'The logical name for disk \'%s\' isn\'t available. Is the '
-#             'guest agent installed?',
-#             attachment.disk.id,
-#         )
+    def _migrate_agent_vm(self):
+        agent_vm = self._agent_vm_service.get()
+        data_vm = self._data_vm_service.get()
 
-# Insert here the code to contact the backup agent and do the actual
-# backup ...
-logging.info('Doing the actual backup ...')
+        if agent_vm.host.id != data_vm.host.id:
+            logging.info("Migrating VM '%s' from '%s' to '%s'", agent_vm.name, agent_vm.host.id, data_vm.host.id)
+            self._agent_vm_service.migrate(cluster=data_vm.cluster, host=data_vm.host, wait=True)
+            while self._agent_vm_service.get().status == types.VmStatus.MIGRATING:
+                time.sleep(10)
 
-########################################################################
-########################################################################
-########################################################################
+    @staticmethod
+    def _save_ovf(data_vm, backup_dir):
+        # Save the OVF to a file, so that we can use to restore the virtual
+        # machine later. The name of the file is the name of the virtual
+        # machine, followed by an underscore and the identifier of the virtual machine,
+        # to make it unique:
+        ovf_data = data_vm.initialization.configuration.data
+        ovf_file = os.path.join(backup_dir, '{}_{}.ovf'.format(data_vm.name, data_vm.id))
 
-transfer_completed = True
+        with open(ovf_file, 'w') as ovs_fd:
+            ovs_fd.write(ovf_data)
 
-try:
-    for attachment in attachments:
-        inputfile = glob.glob('/dev/disk/by-id/*%s' % attachment.disk.id[:20])[0]
-        if_arg = "if=%s" % inputfile
-        of_arg = "of=%s/%s" % (backup_dir_date, attachment.disk.id)
-        cmd_args = ['dd', if_arg, of_arg]
-        logging.info('Executing command: \'%s\'', subprocess.list2cmdline(cmd_args))
+        logging.info("Wrote OVF to file '%s'", os.path.abspath(ovf_file))
+
+    @staticmethod
+    def _get_system_service():
+        config = configparser.ConfigParser()
+        config.read('/root/.ovirtshellrc')
+
+        connection = sdk.Connection(url=config.get('ovirt-shell', 'url'),
+                                    username=config.get('ovirt-shell', 'username'),
+                                    password=config.get('ovirt-shell', 'password'),
+                                    # ca_file=API_CA_FILE,
+                                    insecure=True,
+                                    debug=True,
+                                    log=logging.getLogger())
+        logging.info('Connected to the server')
+        return connection.system_service()
+
+    def _get_vm_service(self, vm_name):
+        vm_list = self._vms_service.list(search='name={}'.format(vm_name))
+
+        try:
+            return self._vms_service.vm_service(vm_list[0].id)
+        except IndexError:
+            raise BackupError("VM '{}' doesn't exist!".format(vm_name))
+
+    @property
+    def _vms_service(self):
+        return self._system_service.vms_service()
+
+    def _backup_snapshot_disks(self, snapshot_service, backup_vm_date_dir):
+        disks_service = snapshot_service.disks_service()
+        snapshot = snapshot_service.get()
+
+        attachments_service = self._agent_vm_service.disk_attachments_service()
+        for snapshot_disk in disks_service.list():
+            attachment = attachments_service.add(
+                attachment=types.DiskAttachment(
+                    disk=types.Disk(
+                        id=snapshot_disk.id,
+                        snapshot=types.Snapshot(id=snapshot.id)
+                    ),
+                    active=True,
+                    bootable=False,
+                    interface=types.DiskInterface.VIRTIO
+                )
+            )
+
+            logging.info('Attaching disk %s', attachment.disk.id)
+
+            with AutoAttachmentService(attachments_service, attachment):
+                    self._copy_disk(attachment, backup_vm_date_dir)
+
+    @classmethod
+    def _copy_disk(cls, attachment, directory):
+        input_file = cls._find_data_device(attachment)
+        output_file = os.path.join(directory, attachment.disk.id)
+
+        cmd_args = ['dd', 'if={}'.format(input_file), 'of={}'.format(output_file)]
+        logging.info('Executing command: %s', subprocess.list2cmdline(cmd_args))
+
         dd_process = subprocess.Popen(cmd_args, stderr=subprocess.PIPE)
-        (out, err) = dd_process.communicate()
+        _, err = dd_process.communicate()
 
         for line in err.splitlines():
-            msg = 'Command output: %s' % line.rstrip()
-            logging.info(msg)
+            logging.info('Command output: {}'.format(line.decode().rstrip()))
 
         if dd_process.returncode != 0:
-            msg = 'Copy data from \'%s\' to \'%s/%s\' failed' % (inputfile, backup_dir_date, attachment.disk.id)
-            logging.error(msg)
-            print(msg, file=sys.stderr)
-            transfer_completed = False
-            break
+            raise BackupError('Copy failed! (exit code {})'.format(dd_process.returncode))
 
-except Exception as e:
-    logging.error(str(e),)
+    @staticmethod
+    def _find_data_device(attachment):
+        files = glob.glob('/dev/disk/by-id/*{}*'.format(attachment.disk.id[:20]))
+        if len(files) == 0:
+            raise BackupError('Cannot find any usable device for attachment id %s', attachment.disk.id)
 
-# Rotate backups:
-if transfer_completed:
-    dir_list = sorted(glob.glob(BACKUP_DIR + "/*"), key=str.lower)
-    while len(dir_list) > NUM_BACKUP:
-        logging.info('Rotating backup directories (oldest directory will be removed)')
-        # oldest backup is the top of the list
-        cmd = 'rm -rf ' + dir_list.pop(0)
-        logging.info('Executing command: \'%s\'', cmd)
-        os.system(cmd)
- 
-########################################################################
-########################################################################
-########################################################################
+        disk_by_id = files[0]
+        lsblk = subprocess.Popen(['lsblk', '-sln', '-o', 'name', disk_by_id],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-# time.sleep(60)
+        out, err = lsblk.communicate()
+        if lsblk.returncode != 0:
+            raise BackupError(err.decode())
 
-# Detach the disks from the agent virtual machine:
-for attachment in attachments:
-    attachment_service = attachments_service.attachment_service(attachment.id)
-    attachment_service.remove()
-    logging.info(
-        'Detached disk \'%s\' to from the agent virtual machine.',
-        attachment.disk.id,
-    )
+        lines = out.splitlines()
+        dev = lines[-1].strip().decode()
+        return '/dev/{}'.format(dev)
 
-# Remove the snapshot:
-try:
-    snap_service.remove()
-    logging.info('Removed the snapshot \'%s\'.', snap.description)
-except sdk.Error as e:
-    logging.info('Error during remove the snapshot \'%s\'.', snap.description)
-    print('%s: %s' % (DATA_VM_NAME, e))
 
-# Send an external event to indicate to the administrator that the
-# backup of the virtual machine is completed:
-events_service.add(
-    event=types.Event(
-        vm=types.Vm(
-          id=data_vm.id,
-        ),
-        origin=APPLICATION_NAME,
-        severity=types.LogSeverity.NORMAL,
-        custom_id=event_id,
-        description=(
-            'Backup of virtual machine \'%s\' using snapshot \'%s\' is '
-            'completed.' % (data_vm.name, snap_description)
-        ),
-    ),
-)
+# TODO: create a class to move data
+# TODO: use argparse
+# TODO: add events to ovirt console
 
-# Close the connection to the server:
-connection.close()
+
+def main():
+    vm_name = sys.argv[1]
+    try:
+        b = Backup(vm_name)
+        b.run()
+    except BackupError as err:
+        print("Backup of the virtual machine '{}' failed. "
+              "See '/var/log/ovirt_backup.log' for details.".format(vm_name),
+              file=sys.stderr)
+        print("Error: {}".format(err), file=sys.stderr)
+
+
+if __name__ == '__main__':
+    main()
+
