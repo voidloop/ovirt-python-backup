@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/local/bin/python3
 # -*- coding: utf-8 -*-
 
 #
@@ -114,7 +114,7 @@ data_vm_list = vms_service.list(
     all_content=True,
 )
 
-if len(data_vm_list) == 0: 
+if len(data_vm_list) == 0:
     msg = 'Could not find data virtual machine \'%s\'.' % DATA_VM_NAME
     logging.error(msg)
     print(msg, file=sys.stderr)
