@@ -45,7 +45,8 @@ class AutoSnapshotService:
         self._snapshot_service = self._snapshots_service.snapshot_service(self._snapshot.id)
         # Poll and wait till the status of the snapshot is 'ok', which means
         # that it is completely created:
-        logging.info("Waiting till the snapshot is created, current status is '%s'", self._snapshot.snapshot_status)
+        logging.info("Waiting till the snapshot is created, current status is '{}'"
+                     .format(self._snapshot.snapshot_status))
         while self._snapshot_service.get().snapshot_status != types.SnapshotStatus.OK:
             time.sleep(1)
         self._creation_time = datetime.now()
@@ -54,7 +55,7 @@ class AutoSnapshotService:
     @delayed(seconds=30)
     def __exit__(self, *args, **kwargs):
         self._snapshot_service.remove(wait=True)
-        logging.info("Sent request to remove snapshot '%s'", self._snapshot.description)
+        logging.info("Sent request to remove snapshot '{}'".format(self._snapshot.description))
 
 
 class AutoAttachmentService:
@@ -68,7 +69,7 @@ class AutoAttachmentService:
 
     @delayed(seconds=30)
     def __exit__(self, *args, **kwargs):
-        logging.info('Detaching disk %s', self._attachment.disk.id)
+        logging.info('Detaching disk {}'.format(self._attachment.disk.id))
         self._attachment_service.remove(wait=True)
 
 
@@ -107,17 +108,17 @@ class Backup:
             )
         )
 
-        logging.info("Sent request to create snapshot '%s' (%s)", snapshot.description, snapshot.id)
+        logging.info("Sent request to create snapshot '{}' ({})".format(snapshot.description, snapshot.id))
 
         try:
             with AutoSnapshotService(snapshots_service, snapshot) as snapshot_service:
                 self._migrate_agent_vm()
                 self._backup_snapshot_disks(snapshot_service, backup_vm_date_dir)
             self._remove_old_backups(backup_vm_dir)
-            logging.info("Backup VM '%s' finished", self._data_vm_name)
+            logging.info("Backup VM '{}' finished".format(self._data_vm_name))
         except BackupError as err:
             logging.exception(err)
-            logging.info("Backup VM '%s' failed! Current backup directory will be removed", self._data_vm_name)
+            logging.info("Backup VM '{}' failed! Current backup directory will be removed".format(self._data_vm_name))
             self._remove_dir(backup_vm_date_dir)
             raise
 
@@ -131,7 +132,7 @@ class Backup:
     @staticmethod
     def _remove_dir(directory):
         cmd = 'rm -rf {}'.format(directory)
-        logging.info("Removing directory: '%s'", directory)
+        logging.info("Removing directory: '{}'".format(directory))
         os.system(cmd)
 
     def _migrate_agent_vm(self):
@@ -139,7 +140,7 @@ class Backup:
         data_vm = self._data_vm_service.get()
 
         if agent_vm.host.id != data_vm.host.id:
-            logging.info("Migrating VM '%s' from '%s' to '%s'", agent_vm.name, agent_vm.host.id, data_vm.host.id)
+            logging.info("Migrating VM '{}' from '{}' to '{}'".format(agent_vm.name, agent_vm.host.id, data_vm.host.id))
             self._agent_vm_service.migrate(cluster=data_vm.cluster, host=data_vm.host, wait=True)
             while self._agent_vm_service.get().status == types.VmStatus.MIGRATING:
                 time.sleep(10)
@@ -156,7 +157,7 @@ class Backup:
         with open(ovf_file, 'w') as ovs_fd:
             ovs_fd.write(ovf_data)
 
-        logging.info("Wrote OVF to file '%s'", os.path.abspath(ovf_file))
+        logging.info("Wrote OVF to file '{}'".format(os.path.abspath(ovf_file)))
 
     @staticmethod
     def _get_system_service():
@@ -203,18 +204,18 @@ class Backup:
                 )
             )
 
-            logging.info('Attaching disk %s', attachment.disk.id)
+            logging.info('Attaching disk {}'.format(attachment.disk.id))
 
             with AutoAttachmentService(attachments_service, attachment):
                     self._copy_disk(attachment, backup_vm_date_dir)
 
     @classmethod
     def _copy_disk(cls, attachment, directory):
-        input_file = cls._find_data_device(attachment)
+        input_file = cls._find_data_disk(attachment)
         output_file = os.path.join(directory, attachment.disk.id)
 
         cmd_args = ['dd', 'if={}'.format(input_file), 'of={}'.format(output_file)]
-        logging.info('Executing command: %s', subprocess.list2cmdline(cmd_args))
+        logging.info('Executing command: {}'.format(subprocess.list2cmdline(cmd_args)))
 
         dd_process = subprocess.Popen(cmd_args, stderr=subprocess.PIPE)
         _, err = dd_process.communicate()
@@ -226,22 +227,16 @@ class Backup:
             raise BackupError('Copy failed! (exit code {})'.format(dd_process.returncode))
 
     @staticmethod
-    def _find_data_device(attachment):
-        files = glob.glob('/dev/disk/by-id/*{}*'.format(attachment.disk.id[:20]))
-        if len(files) == 0:
-            raise BackupError('Cannot find any usable device for attachment id %s', attachment.disk.id)
-
-        disk_by_id = files[0]
-        lsblk = subprocess.Popen(['lsblk', '-sln', '-o', 'name', disk_by_id],
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        out, err = lsblk.communicate()
-        if lsblk.returncode != 0:
-            raise BackupError(err.decode())
-
-        lines = out.splitlines()
-        dev = lines[-1].strip().decode()
-        return '/dev/{}'.format(dev)
+    def _find_data_disk(attachment):
+        for path in glob.glob('/sys/block/*/serial'):
+            with open(path, 'r') as file:
+                serial = file.read()
+            if serial == attachment.disk.id[:20]:
+                # path.split('/') == ('', 'sys', 'block', disk, 'serial')
+                disk = path.split('/')[3]
+                return '/dev/{}'.format(disk)
+        else:
+            raise BackupError('Cannot find any usable disk for attachment id {}'.format(attachment.disk.id))
 
 
 # TODO: create a class to move data
@@ -263,4 +258,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

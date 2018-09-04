@@ -5,7 +5,7 @@
       <paths name="ov-backup">
         <serverdata>
           <mappings>
-            <mapping deploy="/ovirt-backup" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/ovirt_backup" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
