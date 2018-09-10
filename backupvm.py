@@ -27,15 +27,6 @@ class BackupError(Exception):
     pass
 
 
-def delayed(seconds):
-    def decorator(f):
-        def wrapper(*args, **kwargs):
-            time.sleep(seconds)
-            return f(*args, **kwargs)
-        return wrapper
-    return decorator
-
-
 class AutoSnapshotService:
     def __init__(self, snapshots_service, snapshot):
         self._snapshots_service = snapshots_service
@@ -52,10 +43,11 @@ class AutoSnapshotService:
         self._creation_time = datetime.now()
         return self._snapshot_service
 
-    @delayed(seconds=30)
     def __exit__(self, *args, **kwargs):
+        time.sleep(30)
         self._snapshot_service.remove(wait=True)
         logging.info("Sent request to remove snapshot '{}'".format(self._snapshot.description))
+        time.sleep(30)
 
 
 class AutoAttachmentService:
@@ -63,14 +55,15 @@ class AutoAttachmentService:
         self._attachments_service = attachments_service
         self._attachment = attachment
 
-    @delayed(seconds=60)
     def __enter__(self):
+        time.sleep(60)
         self._attachment_service = self._attachments_service.attachment_service(self._attachment.id)
 
-    @delayed(seconds=30)
     def __exit__(self, *args, **kwargs):
         logging.info('Detaching disk {}'.format(self._attachment.disk.id))
+        time.sleep(30)
         self._attachment_service.remove(wait=True)
+        time.sleep(30)
 
 
 class Backup:
@@ -103,7 +96,7 @@ class Backup:
         snapshots_service = self._data_vm_service.snapshots_service()
         snapshot = snapshots_service.add(
             snapshot=types.Snapshot(
-                description=str(backup_time),
+                description='Backup {}'.format(str(backup_time)),
                 persist_memorystate=False
             )
         )
@@ -116,7 +109,7 @@ class Backup:
                 self._backup_snapshot_disks(snapshot_service, backup_vm_date_dir)
             self._remove_old_backups(backup_vm_dir)
             logging.info("Backup VM '{}' finished".format(self._data_vm_name))
-        except BackupError as err:
+        except (sdk.Error, BackupError) as err:
             logging.exception(err)
             logging.info("Backup VM '{}' failed! Current backup directory will be removed".format(self._data_vm_name))
             self._remove_dir(backup_vm_date_dir)
@@ -249,7 +242,7 @@ def main():
     try:
         b = Backup(vm_name)
         b.run()
-    except BackupError as err:
+    except (sdk.Error, BackupError) as err:
         print("Backup of the virtual machine '{}' failed. "
               "See '/var/log/ovirt_backup.log' for details.".format(vm_name),
               file=sys.stderr)
