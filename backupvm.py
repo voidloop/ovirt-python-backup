@@ -1,4 +1,8 @@
 #!/usr/local/bin/python3
+
+# Python2 compatibility
+from __future__ import print_function
+
 import glob
 from datetime import datetime
 
@@ -9,6 +13,7 @@ import os
 import ovirtsdk4 as sdk
 import sys
 import time
+
 
 try:
     import ConfigParser as configparser

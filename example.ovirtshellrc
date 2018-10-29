@@ -1,0 +1,4 @@
+[ovirt-shell]
+url=https://server.example.com/ovirt-engine/api
+username=admin@internal
+password=MySeCuR3PassWord
