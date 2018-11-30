@@ -7,7 +7,7 @@ A script to backup oVirt virtual machines.
 * ovirtsdk4 python library (python-ovirt-engine-sdk4 on Centos, other distributions may use different package names)
 
 # Setup
-* Set up a VM to do the backups, give the VM a path to backup to 
+* Set up a VM to do the backups, give the VM a path to backup
 * Clone this repository
 * Open the backupvm.py file, change some settings:
 * `_base_backup_dir` has the storage location for the backups
