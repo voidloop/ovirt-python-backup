@@ -56,7 +56,7 @@ class AutoSnapshotService:
             try:
                 snapstatus = self._snapshot_service.get().snapshot_status
             except Exception as e:
-                logging.error("Error getting snapshot status: '{}'".format(e))
+                logging.warning("Error getting snapshot status: '{}'".format(e))
 
             tries = tries + 1
             time.sleep(2)
@@ -143,7 +143,7 @@ class Backup:
                         self._migrate_agent_vm()
                     except Exception as e:
                         # Catch the exception, failure to migrate should not cause the back-up to fail.
-                        logging.error('Could not migrate VM, error: {}'.format(e))
+                        logging.warning('Could not migrate VM, error: {}'.format(e))
 
                 # Create the snapshotted disks.
                 self._backup_snapshot_disks(snapshot_service, backup_vm_date_dir)
@@ -188,7 +188,7 @@ class Backup:
                     description=event)
             )
         except Exception as e:
-            logging.error("Error creating event: {}".format(e))
+            logging.warning("Error creating event: {}".format(e))
 
     def _remove_old_backups(self, backup_vm_dir):
         # Search for successful back-ups (those that have a "OK" file).
