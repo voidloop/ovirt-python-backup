@@ -28,11 +28,13 @@ logging.basicConfig(
     filename=os.path.expanduser("~") + "/log/ovirt_backup.log"
 )
 
+
 class BackupError(Exception):
     pass
 
 class SnapshotError(Exception):
     pass
+
 
 class AutoSnapshotService:
     def __init__(self, snapshots_service, snapshot):
@@ -97,6 +99,7 @@ class Backup:
     def __init__(self, data_vm_name, versions, agent, export_domain, basedir, migrate):
         self._system_service = self._get_system_service()
         self._events_service = self._system_service.events_service()
+
         # Set parameters:
         self._data_vm_name = data_vm_name
         self._num_backups = versions
@@ -110,6 +113,7 @@ class Backup:
 
     def run(self):
         backup_time = datetime.now()
+        self._add_event("Starting backup for {}".format(self._data_vm_name))
 
         backup_vm_dir = os.path.join(self._base_backup_dir, self._data_vm_name)
         backup_vm_date_dir = os.path.join(backup_vm_dir, backup_time.strftime('%Y%m%d%H%M'))
@@ -162,13 +166,29 @@ class Backup:
             with open(ok_file, 'w') as ok:
                 ok.write('backup completed succesfully, {}'.format(time.time()))
 
-            logging.info("Backup VM '{}' completed succesfully.".format(self._data_vm_name))
+            # Let the world know about our great success.
+            self._add_event("Backup of VM '{}' completed succesfully.".format(self._data_vm_name))
 
         except (sdk.Error, BackupError) as err:
             logging.exception(err)
             logging.info("Backup VM '{}' failed! Current backup directory will be removed".format(self._data_vm_name))
             self._remove_dir(backup_vm_date_dir)
             raise
+
+    def _add_event(self, event):
+        logging.info("Add event: '{}'".format(event))
+        try:
+            self._events_service.add(
+                    event=types.Event(origin='image backup',
+                    severity=types.LogSeverity.NORMAL,
+                    # use current time as unique event id.
+                    custom_id=int(time.time()),
+                    # Add the event to the data VM.
+                    vm = self._data_vm_service.get(),
+                    description=event)
+            )
+        except Exception as e:
+            logging.error("Error creating event: {}".format(e))
 
     def _remove_old_backups(self, backup_vm_dir):
         # Search for successful back-ups (those that have a "OK" file).
