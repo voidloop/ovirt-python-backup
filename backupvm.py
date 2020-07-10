@@ -395,9 +395,6 @@ EOF
             time.sleep(5)
         raise BackupError('Cannot find any usable disk for attachment id {}'.format(attachment.disk.id))
 
-# TODO: create a class to move data
-# TODO: add events to ovirt console
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("vmname", type=str,
