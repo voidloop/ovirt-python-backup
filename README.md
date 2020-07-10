@@ -10,6 +10,10 @@ A script to backup oVirt virtual machines.
 * Set up a VM to do the backups, give the VM a path to backup to (this could be an NFS share that is also used for oVirt exports).
 * Clone this repository
 * Set up '~/.ovirtshellrc', an example is at `example.ovirtshellrc` (https://access.redhat.com/documentation/en-us/red_hat_virtualization/4.0/html/rhevm_shell_guide/ovirtshellrc_configuration), at least the url, username and password (under ovirt-shell)
+* Make sure that the directory ~/log/ exists and is writable by your user.
+* If running as a non-root user, add your user to the "disk" group (on EL based distributions):
+  usermod -a -G disk backupuser
+* If you want to use the automatic linking of back-ups to the export-domain, make sure the files are readable by vdsm ( uid = 36, gid = 36 ), one way to accomplish this is using a backupuser with uid and gid 36. You could also use the all_squash option on your NFS server.
 
 # Usage:
 
