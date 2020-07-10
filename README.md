@@ -16,7 +16,7 @@ A script to backup oVirt virtual machines.
 * If you want to use the automatic linking of back-ups to the export-domain, make sure the files are readable by vdsm ( uid = 36, gid = 36 ), one way to accomplish this is using a backupuser with uid and gid 36. You could also use the all_squash option on your NFS server.
 
 # Usage:
-
+```
 usage: backupvm.py [-h] [-b BASEDIR] [-a AGENTVM] [-e EXPORT_DOMAIN]
                    [-n VERSIONS] [-m]
                    vmname
@@ -40,4 +40,4 @@ optional arguments:
   -m, --migrate-vm      Try to migrate the agent VM to the same host as the VM
                         to back-up, the VMs have to be in the same oVirt
                         cluster.
-
+```
