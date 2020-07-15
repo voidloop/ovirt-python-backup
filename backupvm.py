@@ -21,13 +21,15 @@ try:
 except ImportError:
     import configparser
 
+# Logfile default location:
+logfile=os.path.expanduser("~") + "/log/ovirt_backup.log"
+
 logging.basicConfig(
     format='%(asctime)s %(levelname)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     level=logging.INFO,
-    filename=os.path.expanduser("~") + "/log/ovirt_backup.log"
+    filename=logfile
 )
-
 
 class BackupError(Exception):
     pass
@@ -171,21 +173,24 @@ class Backup:
 
         except (sdk.Error, BackupError) as err:
             logging.exception(err)
-            logging.info("Backup VM '{}' failed! Current backup directory will be removed".format(self._data_vm_name))
+            logging.error("Backup VM '{}' failed! Current backup directory will be removed".format(self._data_vm_name))
+            self._add_event("Backup of VM '{}' failed.".format(self._data_vm_name))
             self._remove_dir(backup_vm_date_dir)
             raise
 
-    def _add_event(self, event):
-        logging.info("Add event: '{}'".format(event))
+    def _add_event(self, event, severity=types.LogSeverity.NORMAL):
+        logging.info("Add event: '{}' with severity '{}'.".format(event, severity))
         try:
             self._events_service.add(
-                    event=types.Event(origin='image backup',
-                    severity=types.LogSeverity.NORMAL,
-                    # use current time as unique event id.
-                    custom_id=int(time.time()),
-                    # Add the event to the data VM.
-                    vm = self._data_vm_service.get(),
-                    description=event)
+                    event=types.Event(
+                        origin='image-backup',
+                        severity=severity,
+                        # use current time as unique event id.
+                        custom_id=int(time.time()),
+                        # Add the event to the data VM.
+                        vm = self._data_vm_service.get(),
+                        description='image-backup: {}'.format(event)
+                    )
             )
         except Exception as e:
             logging.warning("Error creating event: {}".format(e))
@@ -423,7 +428,7 @@ def main():
         b.run()
     except (sdk.Error, BackupError) as err:
         print("Backup of the virtual machine '{}' failed. "
-              "See '/var/log/ovirt_backup.log' for details.".format(vm_name),
+              "See {} for details.".format(vm_name, logfile),
               file=sys.stderr)
         print("Error: {}".format(err), file=sys.stderr)
 
