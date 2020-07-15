@@ -330,7 +330,7 @@ class Backup:
             logging.info('Attach disk {}'.format(attachment.disk.id))
 
             with AutoAttachmentService(attachments_service, attachment):
-                    self._copy_disk(attachment, backup_vm_date_dir, image_id, image_size, image_description)
+                    self._copy_disk(attachment, directory=backup_vm_date_dir, image_id=image_id, image_size=image_size, image_description=image_description)
 
     def _copy_disk(self, attachment, directory, image_id, image_size, image_description):
         input_file = self._find_data_disk(attachment)
@@ -424,7 +424,14 @@ def main():
     vm_name = args.vmname
 
     try:
-        b = Backup(vm_name, args.versions, args.agentvm, args.export_domain, args.basedir, args.migrate)
+        b = Backup(
+                data_vm_name=vm_name,
+                versions=args.versions,
+                agent=args.agentvm,
+                export_domain=args.export_domain,
+                basedir=args.basedir,
+                migrate=args.migrate
+            )
         b.run()
     except (sdk.Error, BackupError) as err:
         print("Backup of the virtual machine '{}' failed. "
