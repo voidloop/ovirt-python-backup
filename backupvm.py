@@ -174,7 +174,7 @@ class Backup:
         except (sdk.Error, BackupError) as err:
             logging.exception(err)
             logging.error("Backup VM '{}' failed! Current backup directory will be removed".format(self._data_vm_name))
-            self._add_event("Backup of VM '{}' failed.".format(self._data_vm_name))
+            self._add_event("Backup of VM '{}' failed.".format(self._data_vm_name), types.LogSeverity.WARNING)
             self._remove_dir(backup_vm_date_dir)
             raise
 
