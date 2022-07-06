@@ -12,16 +12,11 @@ import sys
 import time
 import argparse
 import configparser
+from pathlib import Path
 
-# Logfile default location:
-logfile = os.path.expanduser("~") + "/log/ovirt_backup.log"
-
-logging.basicConfig(
-    format='%(asctime)s %(levelname)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    level=logging.INFO,
-    filename=logfile
-)
+config_home_dir = Path.home().joinpath('.ovirt_backup.d')
+config_file = config_home_dir.joinpath('config')
+log_file = config_home_dir.joinpath('log/ovirt_backup.log')
 
 
 class BackupError(Exception):
@@ -41,24 +36,24 @@ class AutoSnapshotService:
         self._snapshot_service = self._snapshots_service.snapshot_service(self._snapshot.id)
         # Poll and wait till the status of the snapshot is 'ok', which means
         # that it is completely created:
-        maxtries = 50
+        max_retries = 50
         tries = 0
-        snapstatus = types.SnapshotStatus.LOCKED
-        while snapstatus != types.SnapshotStatus.OK:
-            if tries > maxtries:
+        snapshot_status = types.SnapshotStatus.LOCKED
+        while snapshot_status != types.SnapshotStatus.OK:
+            if tries > max_retries:
                 raise SnapshotError("Timeout creating snapshot")
             logging.info(
-                "Waiting until the snapshot is created, current status is '{}', try {}".format(snapstatus, tries))
+                "Waiting until the snapshot is created, current status is '{}', try {}".format(snapshot_status, tries))
 
             try:
-                snapstatus = self._snapshot_service.get().snapshot_status
+                snapshot_status = self._snapshot_service.get().snapshot_status
             except Exception as e:
                 logging.warning("Error getting snapshot status: '{}'".format(e))
 
             tries = tries + 1
             time.sleep(2)
 
-        logging.info("Snapshot created, status '{}'".format(snapstatus))
+        logging.info("Snapshot created, status '{}'".format(snapshot_status))
         self._creation_time = datetime.now()
         return self._snapshot_service
 
@@ -70,7 +65,7 @@ class AutoSnapshotService:
         while snap.snapshot_status == types.SnapshotStatus.LOCKED:
             try:
                 snap = self._snapshot_service.get()
-            except:
+            except Exception:
                 break
             logging.info("Still removing snapshot '{}'.".format(self._snapshot.description))
             time.sleep(10)
@@ -278,10 +273,8 @@ class Backup:
 
     @staticmethod
     def _get_system_service():
-        ovirt_shell_config = os.path.expanduser("~") + "/.ovirtshellrc"
-
         config = configparser.ConfigParser()
-        config.read(ovirt_shell_config)
+        config.read(config_file)
 
         connection = sdk.Connection(url=config.get('ovirt-shell', 'url'),
                                     username=config.get('ovirt-shell', 'username'),
@@ -290,6 +283,7 @@ class Backup:
                                     insecure=True,
                                     debug=True,
                                     log=logging.getLogger())
+
         logging.info('Connected to the server')
         return connection.system_service()
 
@@ -382,9 +376,9 @@ EOF
 
     @staticmethod
     def _find_data_disk(attachment):
-        maxtries = 6
+        max_retries = 6
         tries = 0
-        while tries < maxtries:
+        while tries < max_retries:
             logging.info('Searching for attached disk: {}'.format(attachment.disk.id))
             tries = tries + 1
             for path in glob.glob('/sys/block/*/serial'):
@@ -406,20 +400,40 @@ def main():
                         help="Basedir for backups. (MANDATORY)")
     parser.add_argument("-b", "--basedir", type=str, dest="basedir",
                         help="Basedir for backups. (MANDATORY)")
-    parser.add_argument("-a", "--agentvm", type=str, dest="agentvm",
-                        help="Name of the VM to attach the disks to (normally the VM where this script is running). (MANDATORY)")
+    parser.add_argument("-a", "--agent-vm", type=str, dest="agentvm",
+                        help="Name of the VM to attach the disks to (normally the VM where "
+                             "this script is running). (MANDATORY)")
     parser.add_argument("-e", "--export-domain", type=str, dest="export_domain",
-                        help="UID of the export domain to link the backup to for easy restores, this should be a directory in the root of the basedir. (OPTIONAL)")
+                        help="UID of the export domain to link the backup to for easy restores, "
+                             "this should be a directory in the root of the basedir. (OPTIONAL)")
     parser.add_argument("-n", "--numkeep", type=int, dest="versions", default=7,
                         help="Number of versions to keep. (OPTIONAL, default = 7)")
     parser.add_argument("-m", "--migrate-vm", action='store_const', dest="migrate", const=1,
-                        help="Try to migrate the agent VM to the same host as the VM to back-up, the VMs have to be in the same oVirt cluster.")
+                        help="Try to migrate the agent VM to the same host as the VM to back-up, "
+                             "the VMs have to be in the same oVirt cluster.")
+    parser.add_argument("-r", "--agent-hostname", type=str, dest='agent_hostname',
+                        help="Hostname of the agent. Specify this option to execute all command "
+                             "to backup the VM on the agent through SSH. (OPTIONAL)")
 
     args = parser.parse_args()
 
     # Check if required options are valid and specified.
     if not (args.vmname and args.basedir and args.agentvm):
         exit(parser.print_help())
+
+    # create config home directory if it doesn't exist
+    if not config_home_dir.exists():
+        config_home_dir.mkdir(mode=0o700)
+        config_home_dir.joinpath('log').mkdir()
+    elif not config_home_dir.is_dir():
+        print(f"Error: cannot create config home directory `{config_home_dir}', "
+              "file already exists", file=sys.stderr)
+        sys.exit(1)
+
+    logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S',
+                        level=logging.INFO,
+                        filename=log_file)
 
     vm_name = args.vmname
 
@@ -435,7 +449,7 @@ def main():
         b.run()
     except (sdk.Error, BackupError) as err:
         print("Backup of the virtual machine '{}' failed. "
-              "See {} for details.".format(vm_name, logfile),
+              "See {} for details.".format(vm_name, log_file),
               file=sys.stderr)
         print("Error: {}".format(err), file=sys.stderr)
 
