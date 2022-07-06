@@ -1,8 +1,4 @@
 #!/usr/bin/python3
-
-# Python2 compatibility
-from __future__ import print_function
-
 import glob
 from datetime import datetime
 
@@ -15,14 +11,10 @@ import shutil
 import sys
 import time
 import argparse
-
-try:
-    import ConfigParser as configparser
-except ImportError:
-    import configparser
+import configparser
 
 # Logfile default location:
-logfile=os.path.expanduser("~") + "/log/ovirt_backup.log"
+logfile = os.path.expanduser("~") + "/log/ovirt_backup.log"
 
 logging.basicConfig(
     format='%(asctime)s %(levelname)s: %(message)s',
@@ -31,8 +23,10 @@ logging.basicConfig(
     filename=logfile
 )
 
+
 class BackupError(Exception):
     pass
+
 
 class SnapshotError(Exception):
     pass
@@ -53,7 +47,8 @@ class AutoSnapshotService:
         while snapstatus != types.SnapshotStatus.OK:
             if tries > maxtries:
                 raise SnapshotError("Timeout creating snapshot")
-            logging.info("Waiting until the snapshot is created, current status is '{}', try {}".format(snapstatus, tries))
+            logging.info(
+                "Waiting until the snapshot is created, current status is '{}', try {}".format(snapstatus, tries))
 
             try:
                 snapstatus = self._snapshot_service.get().snapshot_status
@@ -80,13 +75,14 @@ class AutoSnapshotService:
             logging.info("Still removing snapshot '{}'.".format(self._snapshot.description))
             time.sleep(10)
 
+
 class AutoAttachmentService:
     def __init__(self, attachments_service, attachment):
         self._attachments_service = attachments_service
         self._attachment = attachment
 
     def __enter__(self):
-        #time.sleep(60)
+        # time.sleep(60)
         logging.info('Attaching disk {}'.format(self._attachment.disk.id))
         self._attachment_service = self._attachments_service.attachment_service(self._attachment.id)
 
@@ -96,6 +92,7 @@ class AutoAttachmentService:
         # Call udev to settle the event queue.
         udev_process = subprocess.Popen(['/usr/bin/udevadm', 'settle'], stderr=subprocess.PIPE)
         logging.info('Detached disk {}'.format(self._attachment.disk.id))
+
 
 class Backup:
     def __init__(self, data_vm_name, versions, agent, export_domain, basedir, migrate):
@@ -147,29 +144,29 @@ class Backup:
                         # Catch the exception, failure to migrate should not cause the back-up to fail.
                         logging.warning('Could not migrate VM, error: {}'.format(e))
 
-                # Create the snapshotted disks.
+                # Create the snapshot.
                 self._backup_snapshot_disks(snapshot_service, backup_vm_date_dir)
- 
+
             # Remove old back-ups.
             self._remove_old_backups(backup_vm_dir)
-            
+
             try:
                 # Only create symlinks if self._export_domain is defined.
                 if self._export_domain:
-                    self._create_symlinks(backup_vm_date_dir, os.path.join(self._base_backup_dir,self._export_domain))
+                    self._create_symlinks(backup_vm_date_dir, os.path.join(self._base_backup_dir, self._export_domain))
                 else:
                     logging.info('No export UID defined, not creating symlinks.')
             except Exception as e:
                 sys.stderr.write('error creating symlinks:\n\n{}\n'.format(e))
-                
-            # Write OK file to indicate the backup was completed succesfully.
+
+            # Write OK file to indicate the backup was completed successfully.
             ok_file = backup_vm_date_dir + '.OK'
             logging.info("Writing 'OK' file '{}'.".format(ok_file))
             with open(ok_file, 'w') as ok:
-                ok.write('backup completed succesfully, {}'.format(time.time()))
+                ok.write('backup completed successfully, {}'.format(time.time()))
 
             # Let the world know about our great success.
-            self._add_event("Backup of VM '{}' completed succesfully.".format(self._data_vm_name))
+            self._add_event("Backup of VM '{}' completed successfully.".format(self._data_vm_name))
 
         except (sdk.Error, BackupError) as err:
             logging.exception(err)
@@ -182,15 +179,15 @@ class Backup:
         logging.info("Add event: '{}' with severity '{}'.".format(event, severity))
         try:
             self._events_service.add(
-                    event=types.Event(
-                        origin='image-backup',
-                        severity=severity,
-                        # use current time as unique event id.
-                        custom_id=int(time.time()),
-                        # Add the event to the data VM.
-                        vm = self._data_vm_service.get(),
-                        description='image-backup: {}'.format(event)
-                    )
+                event=types.Event(
+                    origin='image-backup',
+                    severity=severity,
+                    # use current time as unique event id.
+                    custom_id=int(time.time()),
+                    # Add the event to the data VM.
+                    vm=self._data_vm_service.get(),
+                    description='image-backup: {}'.format(event)
+                )
             )
         except Exception as e:
             logging.warning("Error creating event: {}".format(e))
@@ -213,17 +210,18 @@ class Backup:
     def _remove_dir(directory):
         logging.info("Removing directory: '{}'".format(directory))
         shutil.rmtree(directory)
-    
+
     @staticmethod
     def _remove_file(delfile):
         logging.info("Removing file: '{}'".format(delfile))
         os.unlink(delfile)
 
-    def _create_symlinks(self,source,target):
+    @staticmethod
+    def _create_symlinks(source, target):
         image_source_dir = os.path.join(source, 'images')
         image_target_dir = os.path.join(target, 'images')
 
-        logging.info("Creating symlinks: from '{}' to '{}'".format(source,target))
+        logging.info("Creating symlinks: from '{}' to '{}'".format(source, target))
 
         # First link the disk images.
         for image in os.listdir(image_source_dir):
@@ -231,13 +229,13 @@ class Backup:
 
             # We want to create relative symlinks which will also work when the export domain is mounted
             # under a different mountpoint.
-            link_source = os.path.relpath(os.path.join(image_source_dir, image),image_target_dir)
+            link_source = os.path.relpath(os.path.join(image_source_dir, image), image_target_dir)
 
             # Unlink the target (if it already exists as a symlink).
             if os.path.islink(link_target):
                 os.unlink(link_target)
 
-            logging.info("Symlink '{}' to '{}'".format(link_source,link_target))
+            logging.info("Symlink '{}' to '{}'".format(link_source, link_target))
             os.symlink(link_source, link_target)
 
         # Link the OVF.
@@ -247,11 +245,11 @@ class Backup:
         for ovf in os.listdir(ovf_source_dir):
             link_target = os.path.join(ovf_target_dir, ovf)
             # Use a relative source for the symlink to make the export robust in case of different mountpoints.
-            link_source = os.path.relpath(os.path.join(ovf_source_dir, ovf),ovf_target_dir)
+            link_source = os.path.relpath(os.path.join(ovf_source_dir, ovf), ovf_target_dir)
             if os.path.islink(link_target):
                 os.unlink(link_target)
 
-            logging.info("Symlink '{}' to '{}'".format(link_source,link_target))
+            logging.info("Symlink '{}' to '{}'".format(link_source, link_target))
             os.symlink(link_source, link_target)
 
     def _migrate_agent_vm(self):
@@ -330,7 +328,8 @@ class Backup:
             logging.info('Attach disk {}'.format(attachment.disk.id))
 
             with AutoAttachmentService(attachments_service, attachment):
-                    self._copy_disk(attachment, directory=backup_vm_date_dir, image_id=image_id, image_size=image_size, image_description=image_description)
+                self._copy_disk(attachment, directory=backup_vm_date_dir, image_id=image_id, image_size=image_size,
+                                image_description=image_description)
 
     def _copy_disk(self, attachment, directory, image_id, image_size, image_description):
         input_file = self._find_data_disk(attachment)
@@ -340,12 +339,13 @@ class Backup:
         udev_process = subprocess.Popen(['/usr/bin/udevadm', 'settle'], stderr=subprocess.PIPE)
         time.sleep(5)
 
-        output_dir = os.path.join(directory,'images', attachment.disk.id)
+        output_dir = os.path.join(directory, 'images', attachment.disk.id)
         os.makedirs(output_dir)
 
         output_file = os.path.join(output_dir, image_id)
 
-        cmd_args = ['dd', 'bs=1M','iflag=nocache', 'conv=sparse', 'if={}'.format(input_file), 'of={}'.format(output_file)]
+        cmd_args = ['dd', 'bs=1M', 'iflag=nocache', 'conv=sparse', 'if={}'.format(input_file),
+                    'of={}'.format(output_file)]
         logging.info('Executing command: {}'.format(subprocess.list2cmdline(cmd_args)))
 
         dd_process = subprocess.Popen(cmd_args, stderr=subprocess.PIPE)
@@ -359,11 +359,11 @@ class Backup:
 
         # Set a fake value for export_domain if it is not defined.
         export_domain = self._export_domain or '00000000-0000-0000-0000-000000000000'
-        
+
         meta_out = output_file + '.meta'
         logging.info('Writing metafile: {}'.format(meta_out))
 
-        with open( meta_out, 'w' ) as metafile:
+        with open(meta_out, 'w') as metafile:
             metafile.write('''CTIME={}
 DESCRIPTION={}
 DISKTYPE=DATA
@@ -378,8 +378,7 @@ SIZE={}
 TYPE=PREALLOCATED
 VOLTYPE=LEAF
 EOF
-'''.format(int(time.time()),image_description, export_domain, attachment.disk.id, int(image_size/512)))
-
+'''.format(int(time.time()), image_description, export_domain, attachment.disk.id, int(image_size / 512)))
 
     @staticmethod
     def _find_data_disk(attachment):
@@ -390,7 +389,7 @@ EOF
             tries = tries + 1
             for path in glob.glob('/sys/block/*/serial'):
                 with open(path, 'r') as file:
-                   serial = file.read()
+                    serial = file.read()
                 if serial == attachment.disk.id[:20]:
                     # path.split('/') == ('', 'sys', 'block', disk, 'serial')
                     disk = path.split('/')[3]
@@ -400,38 +399,39 @@ EOF
             time.sleep(5)
         raise BackupError('Cannot find any usable disk for attachment id {}'.format(attachment.disk.id))
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("vmname", type=str,
-            help="Basedir for backups. (MANDATORY)")
+                        help="Basedir for backups. (MANDATORY)")
     parser.add_argument("-b", "--basedir", type=str, dest="basedir",
-            help="Basedir for backups. (MANDATORY)")
+                        help="Basedir for backups. (MANDATORY)")
     parser.add_argument("-a", "--agentvm", type=str, dest="agentvm",
-            help="Name of the VM to attach the disks to (normally the VM where this script is running). (MANDATORY)")
+                        help="Name of the VM to attach the disks to (normally the VM where this script is running). (MANDATORY)")
     parser.add_argument("-e", "--export-domain", type=str, dest="export_domain",
-            help="UID of the export domain to link the backup to for easy restores, this should be a directory in the root of the basedir. (OPTIONAL)")
+                        help="UID of the export domain to link the backup to for easy restores, this should be a directory in the root of the basedir. (OPTIONAL)")
     parser.add_argument("-n", "--numkeep", type=int, dest="versions", default=7,
-            help="Number of versions to keep. (OPTIONAL, default = 7)")
+                        help="Number of versions to keep. (OPTIONAL, default = 7)")
     parser.add_argument("-m", "--migrate-vm", action='store_const', dest="migrate", const=1,
-            help="Try to migrate the agent VM to the same host as the VM to back-up, the VMs have to be in the same oVirt cluster.")
+                        help="Try to migrate the agent VM to the same host as the VM to back-up, the VMs have to be in the same oVirt cluster.")
 
     args = parser.parse_args()
 
     # Check if required options are valid and specified.
-    if not ( args.vmname and args.basedir and args.agentvm ):
+    if not (args.vmname and args.basedir and args.agentvm):
         exit(parser.print_help())
-       
+
     vm_name = args.vmname
 
     try:
         b = Backup(
-                data_vm_name=vm_name,
-                versions=args.versions,
-                agent=args.agentvm,
-                export_domain=args.export_domain,
-                basedir=args.basedir,
-                migrate=args.migrate
-            )
+            data_vm_name=vm_name,
+            versions=args.versions,
+            agent=args.agentvm,
+            export_domain=args.export_domain,
+            basedir=args.basedir,
+            migrate=args.migrate
+        )
         b.run()
     except (sdk.Error, BackupError) as err:
         print("Backup of the virtual machine '{}' failed. "
